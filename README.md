@@ -174,159 +174,59 @@ names and wording, and scores your 3 points only.
 
 ### My 3 points and rules
 
-I chose points 5, 10 and 11 because together they force the agent to use all
-three evidence sources (database, documents, interviews) and because each one
-can be decided by a rule that is written down before the model sees a company.
-Point 5 is arithmetic and has no room for a plausible-sounding story. Point 10
-tests whether management's own numbers survive a check against the ledger.
-Point 11 is the part of Fisher's method that only talking to outsiders can
-supply. The three verdicts stay independent: a company can have a good margin
-and still fail on disclosure, and it can pass both and still sell a commodity.
+I chose points 5, 10 and 11 because together they require all three evidence sources, namely the database, the documents and the interviews, and because each rule can be fixed in advance before the model sees a company. Point 5 reduces to arithmetic that the model cannot influence, point 10 tests whether management's own figures survive a check against the ledger, and point 11 covers the qualitative side of Fisher's method that only outside observers can supply. The three verdicts remain independent, so a company can post a good margin and still fail on disclosure, and it can pass both tests while selling a commodity.
 
-**Point 5 — Does the company have a worthwhile profit margin?**
-Fisher treats the margin as a symptom of pricing power rather than a beauty
-contest, so the comparison has to be against the company's own industry, not
-against an arbitrary percentage. My rule: compute FY2025 operating margin as
-(revenue − cost of sales − selling and admin − R&D) ÷ revenue from the
-`orders` and `monthly_costs` tables for January–December 2025, and mark PASS
-only if it is strictly above the `operating_margin_pct` median for the
-company's own industry. Revenue is aggregated from orders separately from the
-cost rows, so the join cannot double-count line items. Evidence: one
-`sql_query` that returns the industry, the median, FY2025 revenue and the three
-cost lines; the division and comparison happen in Python, not in the model.
+**Point 5: Does the company have a worthwhile profit margin?**
 
-**Point 10 — How good are the company's cost analysis and accounting controls?**
-A company that cannot state its own quarterly revenue consistently with its
-recorded orders has a control problem, whatever its margin looks like; this is
-the point where documents and database have to agree. My rule: extract the
-revenue that management states on each of the four earnings calls (Q3 2025 to
-Q2 2026), convert to USD millions, and mark PASS only if every quarter is
-within display rounding of the revenue recorded in `orders` for the same
-quarter (tolerance USD 0.25m or 0.1% of revenue, whichever is larger);
-otherwise FAIL. Evidence: `list_documents` to find the calls,
-`read_document` on the four calls, an LLM extraction step, one SQL query that
-aggregates orders by quarter, and a Python comparison.
+Fisher reads a healthy margin as evidence of pricing power, which means the benchmark has to come from the company's own industry. My rule computes the FY2025 operating margin as revenue minus cost of sales, selling and admin and R&D, divided by revenue, using the `orders` and `monthly_costs` tables for January to December 2025, and it marks PASS only when the result is strictly above the `operating_margin_pct` median for the company's industry. Revenue is aggregated in a separate subquery from the cost rows so that the join cannot double-count line items, one `sql_query` returns the industry, the median, the revenue and the three cost lines, and the division and the comparison take place in Python.
 
-**Point 11 — Are there other aspects of the business that give important clues
-about how outstanding it is in relation to its competition?**
-This is Fisher's "scuttlebutt" point: the useful answer comes from someone who
-deals with the company, not from the annual letter. My rule: ask a competitor
-about `competitive_edge`; if that person cannot comment, ask a customer. Mark
-PASS when the answer describes a durable advantage — real switching costs,
-hard-to-copy installed base or know-how, performance rivals cannot match, or
-customers who leave and come back — and FAIL when the product is described as a
-commodity or interchangeable, when several equivalent suppliers exist, or when
-buyers choose mainly on price. Evidence: one or two `interview` calls plus an
-LLM judge restricted to that quote.
+**Point 10: How good are the company's cost analysis and accounting controls?**
+
+A company whose quarterly revenue statements do not reconcile with its recorded orders has a control problem that a healthy margin cannot offset, and this point is where the documents and the database have to agree. My rule extracts the revenue that management states on each of the four earnings calls from Q3 2025 to Q2 2026, converts every figure to USD millions, and marks PASS only when all four quarters fall within display rounding of the revenue recorded in `orders` for the same quarter, with a tolerance of USD 0.25m or 0.1% of revenue, whichever is larger. The evidence comes from `list_documents` for the call names, `read_document` on the four calls, an LLM extraction step, one SQL query that aggregates orders by quarter, and a Python comparison.
+
+**Point 11: Are there other aspects of the business that give important clues about how outstanding it is in relation to its competition?**
+
+This point is Fisher's scuttlebutt question, and the useful answer comes from someone who deals with the company. My rule asks a competitor about `competitive_edge` and turns to a customer when that person cannot comment, then marks PASS when the answer describes a durable advantage such as real switching costs, a hard-to-copy installed base or know-how, performance that rivals cannot match, or customers who return after leaving, and it marks FAIL when the product is a commodity, when several equivalent suppliers exist, or when buyers choose mainly on price. The evidence consists of one or two `interview` calls and an LLM judge that sees only the quoted answer.
 
 ### Design
 
 ```mermaid
 flowchart TD
     A[Company folder] --> B[Four LangChain tools:<br/>list_documents, read_document,<br/>sql_query, interview]
-    B --> P5[Point 5: one SQL query<br/>industry median + FY2025 revenue and costs]
-    B --> P10[Point 10: list_documents →<br/>read four earnings calls]
-    B --> P11[Point 11: interview<br/>competitor → customer fallback]
-    P5 --> C5[Python: operating margin<br/>vs industry median]
+    B --> P5[Point 5: one SQL query<br/>industry median plus FY2025 revenue and costs]
+    B --> P10[Point 10: list_documents then<br/>read four earnings calls]
+    B --> P11[Point 11: interview<br/>competitor, then customer fallback]
+    P5 --> C5[Python: operating margin<br/>against industry median]
     P10 --> E[LLM: extract four quarterly<br/>revenue figures as JSON]
     E --> R[Regex cross-check on the<br/>same sentences]
     R -->|disagreement| E2[One reflection call:<br/>re-read the sentences]
-    R -->|agreement| C10[Python + SQL: compare with<br/>order revenue by quarter]
+    R -->|agreement| C10[Python and SQL: compare with<br/>order revenue by quarter]
     E2 --> C10
-    P11 --> J[LLM judge with a fixed<br/>PASS/FAIL rubric]
+    P11 --> J[LLM judge with a fixed<br/>PASS and FAIL rubric]
     C5 --> S[LLM: three-sentence<br/>summary grounded in the facts]
     C10 --> S
     J --> S
-    S --> O[points + summary →<br/>results.csv]
+    S --> O[points and summary<br/>written to results.csv]
 ```
 
-The agent is deliberately split between deterministic code and model calls.
-The four per-company tools are the only way it touches company data. Point 5
-is pure SQL plus Python arithmetic: the model never sees a number it could
-mis-add. Point 10 uses the model for what it is good at — reading four
-transcripts and pulling out *this* quarter's revenue rather than guidance or a
-year-on-year comparison — but every extracted number is checked against a
-literal sentence in the same document, and a disagreement triggers one
-reflection call before the Python comparison decides PASS or FAIL. Point 11
-uses the model as a judge against a rubric fixed in the prompt, with the raw
-quote included in the summary so the verdict can be traced. Only the final
-two-or-three-sentence summary is free text. Companies run concurrently, four
-at a time, and each company is wrapped so one API failure cannot abort the
-batch.
+The agent separates deterministic computation from model judgement, and the four per-company tools are its only route to company data. Point 5 runs as SQL followed by Python arithmetic, so the model never handles a figure that it could mis-add. Point 10 gives the model the task it performs well, which is reading four transcripts and selecting the revenue of the quarter under discussion while ignoring guidance and year-on-year comparisons, and every extracted number is checked against a literal sentence in the same document, with a disagreement triggering a single reflection call before the Python comparison decides the verdict. Point 11 uses the model as a judge against a rubric fixed in the prompt, and the raw answer appears in the summary so that the verdict can be traced. Only the final summary is free text, companies run four at a time, and each company is wrapped so that one API failure cannot abort the batch.
 
 ### Results
 
-I ran the completed agent on all 20 public companies three times. Each run
-scored **60/60 point verdicts, balanced accuracy 100.0%** (run 1: 100.0%, run 2:
-100.0%, run 3: 100.0%), and each run took about 0.7 minutes, well inside the
-30-minute limit. Because balanced accuracy averages the recall on true PASS
-and on true FAIL, this is not an artefact of answering PASS everywhere: the six
-true-FAIL companies for each point were all marked FAIL.
+I ran the completed agent on all 20 public companies three times. Each run scored 60 out of 60 point verdicts and a balanced accuracy of 100.0%, each run took about 0.7 minutes, and the 30-minute limit was never close. Balanced accuracy averages the recall on true PASS verdicts and the recall on true FAIL verdicts, so the result does not come from answering PASS everywhere, because all six true-FAIL companies for each point were marked FAIL.
 
-There were **no companies where my verdicts disagree with the public answers**
-in any of the three runs. The public companies are not close to any rule
-boundary: operating margins sit clearly above or below the industry median
-(e.g. 20.5% vs 16.8% for Hollins Group, 4.5% vs 8.3% for Lindale Holdings), the
-disclosed-revenue mismatches are in the millions (e.g. Bramble Labs Q4 2025:
-USD 70.5m disclosed vs USD 65.6m recorded), and the competitive-edge answers
-are unambiguous. I therefore do not read 100% as evidence that the private set
-will also be perfect; the private companies use different wording, which is
-why the extractor is cross-checked and the judge is tested on paraphrases
-("we could move tomorrow", "four of us making the same widget") rather than
-only on the public templates.
+There were no companies where my verdicts disagree with the public answers in any of the three runs. The public companies sit far from every rule boundary: operating margins are clearly above or below the industry median (20.5% against 16.8% for Hollins Group and 4.5% against 8.3% for Lindale Holdings), the disclosed-revenue mismatches run into the millions (Bramble Labs Q4 2025 disclosed USD 70.5m against USD 65.6m recorded), and the competitive-edge answers are unambiguous. A score of 100% therefore says little about the private set, whose wording differs, and that is why the extractor is cross-checked and the judge is tested on paraphrases such as the statement that a buyer could move tomorrow or that four firms make the same widget.
 
 ## Reflection: AI-sycophancy and AI-psychosis
 
-*AI-sycophancy* is the tendency of a model to agree with the user, flatter the
-user's judgement, or change a correct answer once the user pushes back. It is a
-measurable behaviour rather than a personality trait: in the study "Towards
-Understanding Sycophancy in Language Models" (Sharma et al., 2023), models
-often abandoned a correct answer when a user implied it was wrong, and
-preferred responses that matched the user's stated views. The mechanism is
-mundane. Models are trained on human feedback, and humans reward agreement, so
-"you are right, I was wrong" is often the response that gets the higher score.
-Nothing about the model's internal state needs to be deceptive for this to
-happen; the incentive is enough.
+*AI-sycophancy* is the tendency of a model to agree with the user, to praise the user's judgement, or to abandon a correct answer once the user pushes back. It is a measurable behaviour, and the study Towards Understanding Sycophancy in Language Models (Sharma et al., 2023) reported that models often withdrew a correct answer when a user implied that it was wrong and preferred responses that matched the user's stated views. The cause is ordinary, since models are trained on human feedback, humans reward agreement, and a reply that concedes the point tends to receive the higher rating; the model needs no deceptive internal state for the behaviour to appear.
 
-*AI-psychosis* is a looser, mostly colloquial label that became popular in 2025
-for cases where heavy chatbot use is described as reinforcing delusions,
-paranoia or obsessive fixation. It is not a formal clinical diagnosis, and the
-causal claims around it are contested: the same conversations could be a
-symptom of distress rather than its cause, and selection bias in news reporting
-is severe. I treat it as a hypothesis about a feedback loop, not as an
-established medical fact.
+*AI-psychosis* is a looser label that became popular in 2025 for cases in which heavy chatbot use is described as reinforcing delusions, paranoia or obsessive fixation. It has no standing as a formal clinical diagnosis, and the causal claims around it remain contested, because the same conversations could reflect existing distress and news reports select the most dramatic cases. I treat the term as a hypothesis about a feedback pattern, and I do not treat it as an established medical finding.
 
-The interesting part is how the two interact. Sycophancy supplies the fuel for
-the loop. A user who believes a company is fraudulent, or that a stock can only
-go up, can ask a model leading questions and receive polished confirmation.
-Each confirmation makes the next question more confident. The model's
-agreement is not evidence, but it feels like evidence because it is fluent,
-specific and delivered in the voice of an expert. In a hypothetical case, an
-investor convinces themselves that a supplier's margin is fake, asks a chatbot
-to "check whether this is fraud", and receives a list of red flags generated
-from the premise. The list then becomes the reason to ask again. Nothing in the
-loop tests the original premise.
+The two ideas connect through the way agreement can strengthen a pattern of thought. A user who believes that a company is fraudulent, or that a share price can only rise, can ask leading questions and receive polished confirmation, and each confirmation raises the confidence behind the next question. That agreement provides no evidence, and it still feels like evidence because it is fluent, specific and confident, and in one hypothetical case an investor becomes convinced that a supplier's margin is fabricated, asks a chatbot to check the accounts for fraud, and receives a list of warning signs generated from the premise; the list then becomes the reason to ask again, and no step in the exchange tests the original premise.
 
-A second hypothetical case is closer to this homework. Suppose I had asked the
-model, "my rule says a 13% margin is worthwhile, right?", and it had said yes.
-That answer would have been agreeable, plausible and useless, because
-"worthwhile" only means something relative to the industry. The fix is
-structural, not a better prompt: compute the margin in SQL, compare it with the
-industry median in Python, and let the model only explain a verdict it did not
-choose. In this submission the model extracts revenue and judges one interview
-quote; it never decides a number, and a regex cross-check can overrule it.
+A second hypothetical case is closer to this homework. If I had asked the model whether a 13% margin was worthwhile and it had agreed, the answer would have been agreeable, plausible and useless, because the benchmark depends on the industry. The correction is structural: the margin is computed in SQL, compared with the industry median in Python, and the model only explains a verdict that it did not choose, while in this submission it extracts revenue and judges one interview answer, it never decides a figure, and a regex cross-check can overrule it.
 
-For the psychosis-style loop, the useful safeguards are different because the
-problem is the user's confidence, not the model's. Grounding every claim in a
-source the user can open, showing disagreement explicitly instead of smoothing
-it over, refusing to role-play an authority that confirms a factual premise,
-and encouraging the user to talk to another person all break the loop at
-different points. A model that says "I cannot tell from this evidence, here is
-what would settle it" is less pleasant and more valuable than one that agrees.
+The safeguards for the second problem differ because the difficulty lies in the user's confidence. Grounding every claim in a source that the user can open, stating disagreement explicitly, declining to role-play an authority that confirms a factual premise, and encouraging the user to speak with another person each interrupt the pattern at a different stage. A model that answers that it cannot tell from the available evidence, and then names what would settle the question, is less pleasant and more useful than one that agrees.
 
-The honest conclusion is that neither problem is solved by making the model
-sound less confident. Sycophancy is baked into the feedback loop that trains
-these systems, and the delusion-reinforcement risk follows from it. The
-practical defence is to keep a human-verifiable chain between the model's words
-and the world: fixed rules, independent computation, quoted evidence, and a
-willingness to be told "no" by something that is not the model.
+Neither problem disappears when the model sounds less confident, since sycophancy is part of the feedback process that trains these systems and the risk of reinforcing delusions follows from it. The practical defence keeps a human-verifiable path between the model's words and the world, which means fixed rules, independent computation, quoted evidence and a willingness to accept a refusal from something other than the model.
